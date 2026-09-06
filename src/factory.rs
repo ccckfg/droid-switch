@@ -72,6 +72,42 @@ struct JwtClaims {
     exp: Option<i64>,
 }
 
+/// Decrypt a 3-segment AES-GCM string (`iv:tag:ciphertext` in base64) using `key`.
+pub fn decrypt_payload(raw: &str, key: &[u8]) -> Result<String> {
+    let parts: Vec<&str> = raw.trim().split(':').collect();
+    if parts.len() != 3 {
+        return Err(anyhow!(
+            "auth payload must have 3 colon-separated segments, got {}",
+            parts.len()
+        ));
+    }
+    let iv = B64.decode(parts[0]).context("decode iv")?;
+    let tag = B64.decode(parts[1]).context("decode tag")?;
+    let ct = B64.decode(parts[2]).context("decode ciphertext")?;
+
+    let mut combined = ct;
+    combined.extend_from_slice(&tag);
+
+    let pt = match iv.len() {
+        12 => {
+            let cipher =
+                Aes256Gcm12::new_from_slice(key).map_err(|e| anyhow!("invalid key: {e}"))?;
+            let nonce = GenericArray::<u8, U12>::from_slice(&iv);
+            cipher.decrypt(nonce, combined.as_ref())
+        }
+        16 => {
+            let cipher =
+                Aes256Gcm16::new_from_slice(key).map_err(|e| anyhow!("invalid key: {e}"))?;
+            let nonce = GenericArray::<u8, U16>::from_slice(&iv);
+            cipher.decrypt(nonce, combined.as_ref())
+        }
+        n => return Err(anyhow!("unsupported IV length {n} (expected 12 or 16)")),
+    }
+    .map_err(|_| anyhow!("AES-GCM decryption failed (wrong key or corrupt file)"))?;
+
+    String::from_utf8(pt).context("decrypted payload is not UTF-8")
+}
+
 /// Decrypt `auth.v2.file` using `auth.v2.key` and return the JSON payload.
 pub fn decrypt_v2(auth_v2_file: &Path, auth_v2_key: &Path) -> Result<String> {
     let key_b64 = fs::read_to_string(auth_v2_key)
@@ -88,39 +124,7 @@ pub fn decrypt_v2(auth_v2_file: &Path, auth_v2_key: &Path) -> Result<String> {
 
     let raw = fs::read_to_string(auth_v2_file)
         .with_context(|| format!("read {}", auth_v2_file.display()))?;
-    let parts: Vec<&str> = raw.trim().split(':').collect();
-    if parts.len() != 3 {
-        return Err(anyhow!(
-            "auth.v2.file must have 3 colon-separated segments, got {}",
-            parts.len()
-        ));
-    }
-    let iv = B64.decode(parts[0]).context("decode iv")?;
-    let tag = B64.decode(parts[1]).context("decode tag")?;
-    let ct = B64.decode(parts[2]).context("decode ciphertext")?;
-
-    // aes-gcm appends the tag to the ciphertext.
-    let mut combined = ct;
-    combined.extend_from_slice(&tag);
-
-    let pt = match iv.len() {
-        12 => {
-            let cipher =
-                Aes256Gcm12::new_from_slice(&key).map_err(|e| anyhow!("invalid key: {e}"))?;
-            let nonce = GenericArray::<u8, U12>::from_slice(&iv);
-            cipher.decrypt(nonce, combined.as_ref())
-        }
-        16 => {
-            let cipher =
-                Aes256Gcm16::new_from_slice(&key).map_err(|e| anyhow!("invalid key: {e}"))?;
-            let nonce = GenericArray::<u8, U16>::from_slice(&iv);
-            cipher.decrypt(nonce, combined.as_ref())
-        }
-        n => return Err(anyhow!("unsupported IV length {n} (expected 12 or 16)")),
-    }
-    .map_err(|_| anyhow!("AES-GCM decryption failed (wrong key or corrupt file)"))?;
-
-    String::from_utf8(pt).context("decrypted payload is not UTF-8")
+    decrypt_payload(&raw, &key)
 }
 
 /// Decode email + expiry from a JWT access token. Does NOT verify the
@@ -140,11 +144,14 @@ pub fn identity_from_jwt(jwt: &str) -> Result<Identity> {
 }
 
 /// Best-effort identity for a directory containing Factory auth files.
-/// Tries `auth.v2.file` + `auth.v2.key` first, falls back to legacy
-/// `auth.encrypted` (which is plaintext JSON despite the name).
+/// Tries `auth.v2.file` + `auth.v2.key` first, then `auth.v2.keyring` with
+/// OS keyring / local key, falling back to legacy `auth.encrypted`.
 /// Never panics; returns `Identity::unknown()` if everything fails.
 pub fn identity_from_dir(dir: &Path) -> Identity {
     if let Ok(id) = try_v2(dir) {
+        return id;
+    }
+    if let Ok(id) = try_keyring(dir) {
         return id;
     }
     if let Ok(id) = try_legacy(dir) {
@@ -160,6 +167,33 @@ fn try_v2(dir: &Path) -> Result<Identity> {
         return Err(anyhow!("v2 files missing"));
     }
     let payload_json = decrypt_v2(&f, &k)?;
+    let payload: AuthPayload = serde_json::from_str(&payload_json).context("parse auth payload")?;
+    identity_from_jwt(&payload.access_token)
+}
+
+fn try_keyring(dir: &Path) -> Result<Identity> {
+    let keyring_file = dir.join("auth.v2.keyring");
+    let keychain_file = dir.join("auth.v2.loginkeychain");
+    let file_v2 = dir.join("auth.v2.file");
+    let target = if keyring_file.is_file() {
+        keyring_file
+    } else if keychain_file.is_file() {
+        keychain_file
+    } else if file_v2.is_file() {
+        file_v2
+    } else {
+        return Err(anyhow!("keyring file missing"));
+    };
+
+    let key_bytes = if let Ok(k_str) = fs::read_to_string(dir.join("auth.v2.key")) {
+        crate::keyring::decode_key_b64(&k_str)
+    } else {
+        crate::keyring::get_factory_encryption_key()
+    }
+    .ok_or_else(|| anyhow!("could not obtain encryption key for keyring file"))?;
+
+    let raw = fs::read_to_string(&target).with_context(|| format!("read {}", target.display()))?;
+    let payload_json = decrypt_payload(&raw, &key_bytes)?;
     let payload: AuthPayload = serde_json::from_str(&payload_json).context("parse auth payload")?;
     identity_from_jwt(&payload.access_token)
 }
@@ -183,78 +217,86 @@ pub mod testing {
     use aes_gcm::aead::rand_core::RngCore;
     use aes_gcm::aead::OsRng;
     use aes_gcm::AeadCore;
-    use aes_gcm::Aes256Gcm; // 12-byte nonce default; matches our typical case
+    use aes_gcm::Aes256Gcm;
 
-    /// Write a synthetic v2 auth bundle to `dir` whose embedded JWT carries
-    /// the given email and `exp` (unix seconds).
+    fn make_jwt(email: &str, exp: i64) -> String {
+        let h = B64URL.encode(br#"{"alg":"none","typ":"JWT"}"#);
+        let c = serde_json::json!({"email": email, "sub": "u", "exp": exp});
+        let p = B64URL.encode(serde_json::to_vec(&c).unwrap());
+        format!("{h}.{p}.{}", B64URL.encode(b"s"))
+    }
+
+    /// Write a synthetic v2 auth bundle to `dir`.
     pub fn write_synthetic_bundle(dir: &Path, email: &str, exp: i64) {
-        let header = B64URL.encode(br#"{"alg":"none","typ":"JWT"}"#);
-        let claims = serde_json::json!({
-            "email": email,
-            "sub": "user_test",
-            "exp": exp,
-        });
-        let payload = B64URL.encode(serde_json::to_vec(&claims).unwrap());
-        let sig = B64URL.encode(b"sig");
-        let jwt = format!("{header}.{payload}.{sig}");
-
-        let auth_json = serde_json::json!({
-            "access_token": jwt,
-            "refresh_token": "rt_test",
-        })
-        .to_string();
-
-        let mut key_bytes = [0u8; 32];
-        OsRng.fill_bytes(&mut key_bytes);
-        let cipher = Aes256Gcm::new_from_slice(&key_bytes).unwrap();
+        let auth_json =
+            serde_json::json!({"access_token": make_jwt(email, exp), "refresh_token": "rt"})
+                .to_string();
+        let mut key = [0u8; 32];
+        OsRng.fill_bytes(&mut key);
+        let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
         let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
         let ct_with_tag = cipher.encrypt(&nonce, auth_json.as_bytes()).unwrap();
         let (ct, tag) = ct_with_tag.split_at(ct_with_tag.len() - 16);
 
-        let file_contents = format!(
+        let content = format!(
             "{}:{}:{}",
             B64.encode(nonce),
             B64.encode(tag),
-            B64.encode(ct),
+            B64.encode(ct)
         );
         fs::create_dir_all(dir).unwrap();
-        fs::write(dir.join("auth.v2.file"), file_contents).unwrap();
-        fs::write(dir.join("auth.v2.key"), B64.encode(key_bytes)).unwrap();
+        fs::write(dir.join("auth.v2.file"), content).unwrap();
+        fs::write(dir.join("auth.v2.key"), B64.encode(key)).unwrap();
     }
 
-    /// Like `write_synthetic_bundle` but uses a 16-byte IV (matches Factory's
-    /// node:crypto-produced format).
+    /// Like `write_synthetic_bundle` but uses a 16-byte IV.
     pub fn write_synthetic_bundle_16iv(dir: &Path, email: &str, exp: i64) {
-        let header = B64URL.encode(br#"{"alg":"none","typ":"JWT"}"#);
-        let claims = serde_json::json!({"email": email, "sub": "u", "exp": exp});
-        let payload = B64URL.encode(serde_json::to_vec(&claims).unwrap());
-        let jwt = format!("{header}.{payload}.{}", B64URL.encode(b"sig"));
-        let auth_json = serde_json::json!({"access_token": jwt, "refresh_token": "r"}).to_string();
-
-        let mut key_bytes = [0u8; 32];
-        OsRng.fill_bytes(&mut key_bytes);
+        let auth_json =
+            serde_json::json!({"access_token": make_jwt(email, exp), "refresh_token": "r"})
+                .to_string();
+        let mut key = [0u8; 32];
+        OsRng.fill_bytes(&mut key);
         let mut iv = [0u8; 16];
         OsRng.fill_bytes(&mut iv);
 
-        let cipher = Aes256Gcm16::new_from_slice(&key_bytes).unwrap();
+        let cipher = Aes256Gcm16::new_from_slice(&key).unwrap();
         let nonce = GenericArray::<u8, U16>::from_slice(&iv);
         let ct_with_tag = cipher.encrypt(nonce, auth_json.as_bytes()).unwrap();
         let (ct, tag) = ct_with_tag.split_at(ct_with_tag.len() - 16);
 
-        let file_contents = format!("{}:{}:{}", B64.encode(iv), B64.encode(tag), B64.encode(ct),);
+        let content = format!("{}:{}:{}", B64.encode(iv), B64.encode(tag), B64.encode(ct));
         fs::create_dir_all(dir).unwrap();
-        fs::write(dir.join("auth.v2.file"), file_contents).unwrap();
-        fs::write(dir.join("auth.v2.key"), B64.encode(key_bytes)).unwrap();
+        fs::write(dir.join("auth.v2.file"), content).unwrap();
+        fs::write(dir.join("auth.v2.key"), B64.encode(key)).unwrap();
+    }
+
+    /// Write a synthetic keyring bundle to `dir` and return the base64-encoded key.
+    pub fn write_synthetic_keyring_bundle(dir: &Path, email: &str, exp: i64) -> String {
+        let auth_json =
+            serde_json::json!({"access_token": make_jwt(email, exp), "refresh_token": "r"})
+                .to_string();
+        let mut key = [0u8; 32];
+        OsRng.fill_bytes(&mut key);
+        let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let ct_with_tag = cipher.encrypt(&nonce, auth_json.as_bytes()).unwrap();
+        let (ct, tag) = ct_with_tag.split_at(ct_with_tag.len() - 16);
+
+        let content = format!(
+            "{}:{}:{}",
+            B64.encode(nonce),
+            B64.encode(tag),
+            B64.encode(ct)
+        );
+        fs::create_dir_all(dir).unwrap();
+        fs::write(dir.join("auth.v2.keyring"), content).unwrap();
+        B64.encode(key)
     }
 
     /// Write a legacy plaintext `auth.encrypted` file (no v2 bundle).
     pub fn write_legacy_bundle(dir: &Path, email: &str, exp: i64) {
-        let header = B64URL.encode(br#"{"alg":"none"}"#);
-        let claims = serde_json::json!({"email": email, "sub": "u1", "exp": exp}).to_string();
-        let payload = B64URL.encode(claims.as_bytes());
-        let sig = B64URL.encode(b"x");
-        let jwt = format!("{header}.{payload}.{sig}");
-        let body = serde_json::json!({"access_token": jwt, "refresh_token": "r"}).to_string();
+        let body = serde_json::json!({"access_token": make_jwt(email, exp), "refresh_token": "r"})
+            .to_string();
         fs::create_dir_all(dir).unwrap();
         fs::write(dir.join("auth.encrypted"), body).unwrap();
     }
@@ -296,5 +338,15 @@ mod tests {
         write_synthetic_bundle_16iv(td.path(), "carol@example.com", 1_900_000_000);
         let id = identity_from_dir(td.path());
         assert_eq!(id.email.as_deref(), Some("carol@example.com"));
+    }
+
+    #[test]
+    fn roundtrip_keyring_bundle() {
+        let td = TempDir::new().unwrap();
+        let key_b64 = write_synthetic_keyring_bundle(td.path(), "dave@example.com", 1_900_000_000);
+        std::env::set_var(crate::keyring::ENV_KEY_OVERRIDE, &key_b64);
+        let id = identity_from_dir(td.path());
+        std::env::remove_var(crate::keyring::ENV_KEY_OVERRIDE);
+        assert_eq!(id.email.as_deref(), Some("dave@example.com"));
     }
 }

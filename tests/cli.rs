@@ -423,15 +423,24 @@ fn add_watcher_detects_login_and_snapshots() {
         // Small extra delay so the watcher has at least one poll iteration
         // with the original `before_mtime`.
         std::thread::sleep(std::time::Duration::from_millis(50));
-        for f in ["auth.v2.file", "auth.v2.key", "auth.encrypted"] {
+        for f in dsw::paths::AUTH_FILES {
             let _ = fs::remove_file(factory.join(f));
         }
         write_synthetic_bundle(&factory, "bob@example.com", 1_900_000_000);
     });
 
+    let (sleep_bin, sleep_args) = if cfg!(windows) {
+        (
+            "powershell",
+            "-NoProfile\u{1f}-Command\u{1f}Start-Sleep\u{1f}10",
+        )
+    } else {
+        ("sleep", "10")
+    };
+
     sb.cmd()
-        .env("DSW_DROID_BIN", "sleep")
-        .env("DSW_DROID_ARGS", "10")
+        .env("DSW_DROID_BIN", sleep_bin)
+        .env("DSW_DROID_ARGS", sleep_args)
         .env("DSW_READY_FILE", &ready_file)
         .args(["add", "bob"])
         .timeout(std::time::Duration::from_secs(8))
@@ -454,9 +463,15 @@ fn add_watcher_fails_when_droid_exits_without_login() {
     let sb = Sandbox::new();
     sb.write_live("alice@example.com");
 
-    // Fake droid exits immediately (`true`); no new bundle is ever written.
+    let (exit_bin, exit_args) = if cfg!(windows) {
+        ("cmd", "/c\u{1f}exit\u{1f}0")
+    } else {
+        ("true", "")
+    };
+
     sb.cmd()
-        .env("DSW_DROID_BIN", "true")
+        .env("DSW_DROID_BIN", exit_bin)
+        .env("DSW_DROID_ARGS", exit_args)
         .args(["add", "newone"])
         .timeout(std::time::Duration::from_secs(5))
         .assert()
@@ -469,4 +484,36 @@ fn add_watcher_fails_when_droid_exits_without_login() {
         .assert()
         .success()
         .stdout(predicate::str::contains("alice@example.com"));
+}
+
+#[test]
+fn keyring_bundle_switches_and_tracks_profile() {
+    let sb = Sandbox::new();
+    let key_b64 = dsw::factory::testing::write_synthetic_keyring_bundle(
+        &sb.factory,
+        "keyring_user@example.com",
+        1_900_000_000,
+    );
+
+    sb.cmd()
+        .env("FACTORY_ENCRYPTION_KEY", &key_b64)
+        .args(["import", "keyring_prof"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("keyring_user@example.com"));
+
+    // Verify list and status
+    sb.cmd()
+        .env("FACTORY_ENCRYPTION_KEY", &key_b64)
+        .args(["list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("keyring_prof"))
+        .stdout(predicate::str::contains("keyring_user@example.com"));
+
+    // Verify file exists in profile dir
+    assert!(sb
+        .home
+        .join("profiles/keyring_prof/auth.v2.keyring")
+        .is_file());
 }

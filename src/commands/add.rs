@@ -39,7 +39,7 @@ pub fn run(paths: &Paths, args: AddArgs) -> Result<()> {
         // 1. compare emails to detect a real account change after login
         // 2. roll back if the user aborts midway
         let before = identity_from_dir(&paths.factory);
-        let before_mtime = mtime(&paths.factory.join("auth.v2.file"));
+        let before_mtime = latest_auth_mtime(&paths.factory);
 
         if before.email.is_some() {
             // Save current as a hidden 'pre-add' rescue snapshot.
@@ -117,7 +117,7 @@ pub fn run(paths: &Paths, args: AddArgs) -> Result<()> {
     Ok(())
 }
 
-/// File-system watcher. Polls `auth.v2.file` for change of mtime AND a
+/// File-system watcher. Polls the live auth bundle for change of mtime AND a
 /// successful decode whose email differs from `before_email`. When detected,
 /// waits for the file to settle, then tells the main thread to stop `droid`.
 fn login_watcher(
@@ -128,11 +128,10 @@ fn login_watcher(
     stop: Arc<AtomicBool>,
 ) {
     let debug = std::env::var("DSW_DEBUG").is_ok();
-    let auth_v2 = factory.join("auth.v2.file");
     if debug {
         eprintln!(
             "[watcher] watching {} (before_email={:?}, before_mtime={:?})",
-            auth_v2.display(),
+            factory.display(),
             before_email,
             before_mtime,
         );
@@ -151,12 +150,12 @@ fn login_watcher(
             return;
         }
 
-        let now_mtime = mtime(&auth_v2);
+        let now_mtime = latest_auth_mtime(factory);
         if now_mtime != before_mtime && now_mtime.is_some() {
             let id = identity_from_dir(factory);
             if debug {
                 eprintln!(
-                    "[watcher] auth.v2.file changed (mtime={:?}, email={:?})",
+                    "[watcher] auth bundle changed (mtime={:?}, email={:?})",
                     now_mtime, id.email
                 );
             }
@@ -183,6 +182,13 @@ fn login_watcher(
 
 fn mtime(p: &Path) -> Option<SystemTime> {
     std::fs::metadata(p).ok().and_then(|m| m.modified().ok())
+}
+
+fn latest_auth_mtime(factory: &Path) -> Option<SystemTime> {
+    AUTH_FILES
+        .iter()
+        .filter_map(|f| mtime(&factory.join(f)))
+        .max()
 }
 
 fn all_auth_files_exist(factory: &Path) -> bool {

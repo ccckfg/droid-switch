@@ -6,10 +6,16 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
-/// The three credential files dsw treats as the "auth bundle". Anything
+/// The credential files dsw treats as the "auth bundle". Anything
 /// outside this list (sessions, history, settings) is shared across profiles
 /// and never touched.
-pub const AUTH_FILES: &[&str] = &["auth.v2.file", "auth.v2.key", "auth.encrypted"];
+pub const AUTH_FILES: &[&str] = &[
+    "auth.v2.file",
+    "auth.v2.key",
+    "auth.v2.keyring",
+    "auth.v2.loginkeychain",
+    "auth.encrypted",
+];
 
 #[derive(Debug, Clone)]
 pub struct Paths {
@@ -95,7 +101,7 @@ pub fn validate_profile_name(name: &str) -> anyhow::Result<()> {
 
 /// Convenience: check whether a path looks like a populated profile dir.
 pub fn looks_like_profile(dir: &Path) -> bool {
-    dir.is_dir() && dir.join("auth.v2.file").is_file()
+    dir.is_dir() && AUTH_FILES.iter().any(|f| dir.join(f).is_file())
 }
 
 #[cfg(test)]
