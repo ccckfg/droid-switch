@@ -88,6 +88,18 @@ pub struct ListArgs {
     /// Output as JSON
     #[arg(long)]
     pub json: bool,
+
+    /// Force refresh quota limits from server (bypasses 5-minute local cache)
+    #[arg(short, long)]
+    pub refresh: bool,
+
+    /// Show Droid Core quota pool instead of Standard pool
+    #[arg(long)]
+    pub core: bool,
+
+    /// Choose which pool to show: standard, core, or all
+    #[arg(long, value_name = "POOL")]
+    pub pool: Option<String>,
 }
 
 #[derive(Args, Debug)]

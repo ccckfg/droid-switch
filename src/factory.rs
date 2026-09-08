@@ -58,12 +58,14 @@ impl Identity {
     }
 }
 
-#[derive(Deserialize)]
-struct AuthPayload {
-    access_token: String,
-    #[allow(dead_code)]
-    refresh_token: Option<String>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthTokens {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
 }
+
+pub type AuthPayload = AuthTokens;
+
 
 #[derive(Deserialize)]
 struct JwtClaims {
@@ -148,30 +150,33 @@ pub fn identity_from_jwt(jwt: &str) -> Result<Identity> {
 /// OS keyring / local key, falling back to legacy `auth.encrypted`.
 /// Never panics; returns `Identity::unknown()` if everything fails.
 pub fn identity_from_dir(dir: &Path) -> Identity {
-    if let Ok(id) = try_v2(dir) {
-        return id;
-    }
-    if let Ok(id) = try_keyring(dir) {
-        return id;
-    }
-    if let Ok(id) = try_legacy(dir) {
-        return id;
+    if let Some(tokens) = tokens_from_dir(dir) {
+        if let Ok(id) = identity_from_jwt(&tokens.access_token) {
+            return id;
+        }
     }
     Identity::unknown()
 }
 
-fn try_v2(dir: &Path) -> Result<Identity> {
+/// Extract access and refresh tokens from a directory containing Factory auth files.
+pub fn tokens_from_dir(dir: &Path) -> Option<AuthTokens> {
+    try_tokens_v2(dir)
+        .or_else(|_| try_tokens_keyring(dir))
+        .or_else(|_| try_tokens_legacy(dir))
+        .ok()
+}
+
+fn try_tokens_v2(dir: &Path) -> Result<AuthTokens> {
     let f = dir.join("auth.v2.file");
     let k = dir.join("auth.v2.key");
     if !f.is_file() || !k.is_file() {
         return Err(anyhow!("v2 files missing"));
     }
     let payload_json = decrypt_v2(&f, &k)?;
-    let payload: AuthPayload = serde_json::from_str(&payload_json).context("parse auth payload")?;
-    identity_from_jwt(&payload.access_token)
+    serde_json::from_str(&payload_json).context("parse auth payload")
 }
 
-fn try_keyring(dir: &Path) -> Result<Identity> {
+fn try_tokens_keyring(dir: &Path) -> Result<AuthTokens> {
     let keyring_file = dir.join("auth.v2.keyring");
     let keychain_file = dir.join("auth.v2.loginkeychain");
     let file_v2 = dir.join("auth.v2.file");
@@ -194,19 +199,18 @@ fn try_keyring(dir: &Path) -> Result<Identity> {
 
     let raw = fs::read_to_string(&target).with_context(|| format!("read {}", target.display()))?;
     let payload_json = decrypt_payload(&raw, &key_bytes)?;
-    let payload: AuthPayload = serde_json::from_str(&payload_json).context("parse auth payload")?;
-    identity_from_jwt(&payload.access_token)
+    serde_json::from_str(&payload_json).context("parse auth payload")
 }
 
-fn try_legacy(dir: &Path) -> Result<Identity> {
+fn try_tokens_legacy(dir: &Path) -> Result<AuthTokens> {
     let p = dir.join("auth.encrypted");
     if !p.is_file() {
         return Err(anyhow!("legacy file missing"));
     }
     let raw = fs::read_to_string(&p)?;
-    let payload: AuthPayload = serde_json::from_str(&raw)?;
-    identity_from_jwt(&payload.access_token)
+    serde_json::from_str(&raw).context("parse auth payload")
 }
+
 
 /// Test helpers for synthesizing valid Factory auth bundles.
 ///
