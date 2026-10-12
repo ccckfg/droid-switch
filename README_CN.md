@@ -61,7 +61,7 @@ iwr https://raw.githubusercontent.com/ccckfg/droid-switch/main/install.ps1 -UseB
 Rust 用户可以从 crates.io 安装：
 
 ```sh
-cargo install droid-switch
+cargo install --git https://github.com/ccckfg/droid-switch --locked
 ```
 
 ## 快速开始

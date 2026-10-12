@@ -63,7 +63,7 @@ You can also download binaries directly from the
 Rust users can install from crates.io:
 
 ```sh
-cargo install droid-switch
+cargo install --git https://github.com/ccckfg/droid-switch --locked
 ```
 
 ## Quick Start
