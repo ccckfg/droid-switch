@@ -60,7 +60,7 @@ override the default release, repository, or install location.
 You can also download binaries directly from the
 [Releases](https://github.com/ccckfg/droid-switch/releases) page.
 
-Rust users can install from crates.io:
+Rust users can install directly from this repository:
 
 ```sh
 cargo install --git https://github.com/ccckfg/droid-switch --locked
@@ -135,6 +135,8 @@ It copies only these files:
 
 - `auth.v2.file`
 - `auth.v2.key`
+- `auth.v2.keyring`
+- `auth.v2.loginkeychain`
 - `auth.encrypted`
 
 Everything else in `~/.factory` is left untouched.

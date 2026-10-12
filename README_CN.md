@@ -132,6 +132,8 @@ Droid Switch 默认使用这些路径：
 
 - `auth.v2.file`
 - `auth.v2.key`
+- `auth.v2.keyring`
+- `auth.v2.loginkeychain`
 - `auth.encrypted`
 
 `~/.factory` 里的其他内容都不会被修改。
