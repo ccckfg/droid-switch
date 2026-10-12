@@ -9,12 +9,19 @@ use std::path::{Path, PathBuf};
 /// The credential files dsw treats as the "auth bundle". Anything
 /// outside this list (sessions, history, settings) is shared across profiles
 /// and never touched.
+pub const AUTH_V2_FILE: &str = "auth.v2.file";
+pub const AUTH_V2_KEY: &str = "auth.v2.key";
+pub const AUTH_KEYRING: &str = "auth.v2.keyring";
+pub const AUTH_LOGINKEYCHAIN: &str = "auth.v2.loginkeychain";
+pub const AUTH_LEGACY: &str = "auth.encrypted";
+pub const CACHE_DIR: &str = "cache";
+pub const AUTH_READ_ORDER: &[&str] = &[AUTH_KEYRING, AUTH_LOGINKEYCHAIN, AUTH_V2_FILE];
 pub const AUTH_FILES: &[&str] = &[
-    "auth.v2.file",
-    "auth.v2.key",
-    "auth.v2.keyring",
-    "auth.v2.loginkeychain",
-    "auth.encrypted",
+    AUTH_V2_FILE,
+    AUTH_V2_KEY,
+    AUTH_KEYRING,
+    AUTH_LOGINKEYCHAIN,
+    AUTH_LEGACY,
 ];
 
 #[derive(Debug, Clone)]

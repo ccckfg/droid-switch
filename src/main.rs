@@ -2,6 +2,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
+use dsw::auth::lock::AuthLock;
 use dsw::cli::{Cli, Command};
 use dsw::commands;
 use dsw::paths::Paths;
@@ -16,19 +17,7 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     };
 
-    let res = match command {
-        Command::Init(a) => commands::init::run(&paths, a),
-        Command::Add(a) => commands::add::run(&paths, a),
-        Command::Import(a) => commands::import::run(&paths, a),
-        Command::Use(a) => commands::use_::run(&paths, a),
-        Command::List(a) => commands::list::run(&paths, a),
-        Command::Status(a) => commands::status::run(&paths, a),
-        Command::Sync(a) => commands::sync::run(&paths, a),
-        Command::Remove(a) => commands::remove::run(&paths, a),
-        Command::Rename(a) => commands::rename::run(&paths, a),
-        Command::Doctor(a) => commands::doctor::run(&paths, a),
-        Command::Backup(a) => commands::backup::run(&paths, a),
-    };
+    let res = run_command(&paths, command);
 
     match res {
         Ok(()) => ExitCode::SUCCESS,
@@ -36,6 +25,26 @@ fn main() -> ExitCode {
             eprintln!("error: {e:#}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn run_command(paths: &Paths, command: Command) -> anyhow::Result<()> {
+    let _lock = match &command {
+        Command::Status(_) | Command::Doctor(_) => None,
+        _ => Some(AuthLock::acquire(paths)?),
+    };
+    match command {
+        Command::Init(a) => commands::init::run(paths, a),
+        Command::Add(a) => commands::add::run(paths, a),
+        Command::Import(a) => commands::import::run(paths, a),
+        Command::Use(a) => commands::use_::run(paths, a),
+        Command::List(a) => commands::list::run(paths, a),
+        Command::Status(a) => commands::status::run(paths, a),
+        Command::Sync(a) => commands::sync::run(paths, a),
+        Command::Remove(a) => commands::remove::run(paths, a),
+        Command::Rename(a) => commands::rename::run(paths, a),
+        Command::Doctor(a) => commands::doctor::run(paths, a),
+        Command::Backup(a) => commands::backup::run(paths, a),
     }
 }
 

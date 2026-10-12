@@ -1,7 +1,6 @@
 //! Tiny JSON file at `~/.dsw/state.json` tracking which profile is live.
 
 use std::fs;
-use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -28,14 +27,6 @@ impl State {
             fs::create_dir_all(parent)?;
         }
         let body = serde_json::to_vec_pretty(self)?;
-        // Atomic-ish write: write to tmp then rename.
-        let tmp = path.with_extension("json.tmp");
-        {
-            let mut f = fs::File::create(&tmp)?;
-            f.write_all(&body)?;
-            f.sync_all()?;
-        }
-        fs::rename(&tmp, path)?;
-        Ok(())
+        crate::auth::storage::atomic_write(path, &body)
     }
 }

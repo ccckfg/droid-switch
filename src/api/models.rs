@@ -85,12 +85,24 @@ impl UsageSummary {
         let core = resp.limits.as_ref().and_then(|l| l.core.as_ref());
 
         Self {
-            std_5h: std.and_then(|s| s.five_hour.as_ref()).and_then(|w| w.used_percent),
-            std_weekly: std.and_then(|s| s.weekly.as_ref()).and_then(|w| w.used_percent),
-            std_monthly: std.and_then(|s| s.monthly.as_ref()).and_then(|w| w.used_percent),
-            core_5h: core.and_then(|c| c.five_hour.as_ref()).and_then(|w| w.used_percent),
-            core_weekly: core.and_then(|c| c.weekly.as_ref()).and_then(|w| w.used_percent),
-            core_monthly: core.and_then(|c| c.monthly.as_ref()).and_then(|w| w.used_percent),
+            std_5h: std
+                .and_then(|s| s.five_hour.as_ref())
+                .and_then(|w| w.used_percent),
+            std_weekly: std
+                .and_then(|s| s.weekly.as_ref())
+                .and_then(|w| w.used_percent),
+            std_monthly: std
+                .and_then(|s| s.monthly.as_ref())
+                .and_then(|w| w.used_percent),
+            core_5h: core
+                .and_then(|c| c.five_hour.as_ref())
+                .and_then(|w| w.used_percent),
+            core_weekly: core
+                .and_then(|c| c.weekly.as_ref())
+                .and_then(|w| w.used_percent),
+            core_monthly: core
+                .and_then(|c| c.monthly.as_ref())
+                .and_then(|w| w.used_percent),
             credits_cents: resp.extra_usage_balance_cents,
         }
     }
@@ -120,7 +132,10 @@ mod tests {
         assert_eq!(PoolType::from_args(None, true), PoolType::Core);
         assert_eq!(PoolType::from_args(Some("core"), false), PoolType::Core);
         assert_eq!(PoolType::from_args(Some("all"), false), PoolType::All);
-        assert_eq!(PoolType::from_args(Some("standard"), false), PoolType::Standard);
+        assert_eq!(
+            PoolType::from_args(Some("standard"), false),
+            PoolType::Standard
+        );
     }
 
     #[test]
@@ -153,4 +168,3 @@ mod tests {
         assert_eq!(UsageSummary::format_percent(None), "-");
     }
 }
-

@@ -1,11 +1,11 @@
 [package]
 name = "droid-switch"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 rust-version = "1.80"
 description = "Droid Switch: switch between multiple Factory Droid accounts"
 license = "MIT"
-repository = "https://github.com/hqman/droid-switch"
+repository = "https://github.com/ccckfg/droid-switch"
 readme = "README.md"
 keywords = ["cli", "droid", "factory", "account-switcher"]
 categories = ["command-line-utilities"]
@@ -31,12 +31,13 @@ dirs = "5"
 comfy-table = "7"
 libc = "0.2"
 ureq = { version = "3.2.1", features = ["json"] }
+fs2 = "0.4.3"
+tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = ["Win32_Security_Credentials", "Win32_Foundation"] }
 
 [dev-dependencies]
-tempfile = "3"
 assert_cmd = "2"
 predicates = "3"
 

@@ -6,10 +6,10 @@
 
 ### 一个轻量的 Factory Droid 账号切换工具
 
-[![Version](https://img.shields.io/github/v/release/hqman/droid-switch?label=version)](https://github.com/hqman/droid-switch/releases)
-[![Platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon%20%7C%20Linux%20%7C%20Windows-lightgrey)](https://github.com/hqman/droid-switch/releases)
+[![Version](https://img.shields.io/github/v/release/ccckfg/droid-switch?label=version)](https://github.com/ccckfg/droid-switch/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon%20%7C%20Linux%20%7C%20Windows-lightgrey)](https://github.com/ccckfg/droid-switch/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![CI](https://github.com/hqman/droid-switch/actions/workflows/ci.yml/badge.svg)](https://github.com/hqman/droid-switch/actions/workflows/ci.yml)
+[![CI](https://github.com/ccckfg/droid-switch/actions/workflows/ci.yml/badge.svg)](https://github.com/ccckfg/droid-switch/actions/workflows/ci.yml)
 
 Droid Switch 是一个小型命令行工具，用来在多个 Factory Droid 账号之间切换。
 
@@ -43,20 +43,20 @@ Droid Switch 会把每个登录状态保存成一个命名 profile。切换账�
 macOS 和 Linux：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hqman/droid-switch/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/ccckfg/droid-switch/main/install.sh | sh
 ```
 
 Windows PowerShell：
 
 ```powershell
-iwr https://raw.githubusercontent.com/hqman/droid-switch/main/install.ps1 -UseB | iex
+iwr https://raw.githubusercontent.com/ccckfg/droid-switch/main/install.ps1 -UseB | iex
 ```
 
 安装脚本会下载最新的 GitHub Release，并安装到用户本地的二进制目录。可以设置
 `DSW_VERSION`、`DSW_REPO` 或 `DSW_INSTALL_DIR` 来覆盖默认版本、仓库或安装位置。
 
 你也可以直接从
-[Releases](https://github.com/hqman/droid-switch/releases) 页面下载二进制文件。
+[Releases](https://github.com/ccckfg/droid-switch/releases) 页面下载二进制文件。
 
 Rust 用户可以从 crates.io 安装：
 
@@ -206,3 +206,15 @@ GitHub Actions 会发布 macOS、Linux 和 Windows 的预构建二进制文件�
 ## 许可证
 
 MIT。见 [LICENSE](LICENSE)。
+
+## 凭据刷新与账号保护
+
+`dsw use <名称>` 会在切换前刷新已过期或即将过期的已保存 access token。刷新返回的 access token 和 refresh token 会先按原有格式保存，再进行后续 API 请求；凭据中的其他字段会保留。
+
+`dsw list` 根据实际登录身份识别当前账号，并同步 Droid 已更新的凭据。当前登录账号的 refresh token 由 Droid 管理，dsw 不会另行轮换；未登录账号可在查询额度时刷新。表格的 `access token` 列只表示短期访问凭据的到期情况，不能据此判定 refresh token 已失效。JSON 输出新增 `credential_status` 字段。
+
+手动 `/login` 后，`dsw sync` 会拒绝覆盖属于不同账号的档案。可用 `dsw sync --all` 同步身份匹配的档案，或用 `dsw import <名称> --force` 明确替换档案。切换账号前请先关闭正在运行的 Droid 会话。
+
+`DSW_NO_NETWORK=1` 会禁用额度查询和凭据刷新请求，因此离线时无法刷新已过期的未登录账号。服务端已经撤销或过期的 refresh token，需要重新登录 Droid 并导入；临时网络错误不会删除已保存的凭据。
+
+本仓库由 ccckfg 独立维护，基于 [hqman/droid-switch](https://github.com/hqman/droid-switch)，保留原有 MIT 许可和作者归属。

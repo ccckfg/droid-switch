@@ -3,11 +3,11 @@ use serde::Serialize;
 
 use super::fmt_expiry;
 use crate::api::{self, PoolType, UsageSummary};
+use crate::auth::accounts::identities_match;
 use crate::cli::ListArgs;
 use crate::factory::{identity_from_dir, Identity};
 use crate::paths::{Paths, AUTH_FILES};
 use crate::profile;
-use crate::state::State;
 
 #[derive(Serialize)]
 struct Row {
@@ -15,6 +15,7 @@ struct Row {
     active: bool,
     email: Option<String>,
     expires_at: Option<String>,
+    credential_status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     usage: Option<UsageSummary>,
 }
@@ -31,20 +32,32 @@ struct RenderedRow<'a> {
 
 pub fn run(paths: &Paths, args: ListArgs) -> Result<()> {
     let names = profile::list(paths)?;
-    let active = State::load(&paths.state_file())?.active;
+    let live = identity_from_dir(&paths.factory);
     let pool_type = PoolType::from_args(args.pool.as_deref(), args.core);
 
     let rows: Vec<Row> = names
         .iter()
         .map(|name| {
+            let result = api::get_profile_usage(paths, name, args.refresh);
             let id: Identity = identity_from_dir(&paths.profile_dir(name));
-            let usage = api::get_profile_usage(paths, name, args.refresh);
+            let credential_status = match &result {
+                _ if id.email.is_none() && id.subject.is_none() => "unknown",
+                Err(e) if e.to_string().contains("login required") => "login_required",
+                Err(_) => "refresh_failed",
+                Ok(_) if id.is_expired(chrono::Utc::now()) => "access_expired",
+                Ok(_) => "valid",
+            }
+            .to_string();
+            if let Err(e) = &result {
+                eprintln!("profile '{name}': {e:#}");
+            }
             Row {
                 name: name.clone(),
-                active: active.as_deref() == Some(name.as_str()),
+                active: identities_match(&live, &id),
                 email: id.email,
                 expires_at: id.expires_at.map(|e| e.to_rfc3339()),
-                usage,
+                credential_status,
+                usage: result.ok().flatten(),
             }
         })
         .collect();
@@ -95,12 +108,15 @@ fn print_rows(rows: &[Row], pool: PoolType) {
         .map(|r| {
             let active = if r.active { "*" } else { " " };
             let email = r.email.clone().unwrap_or_else(|| "-".into());
-            let token = r
-                .expires_at
-                .as_ref()
-                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                .map(|d| fmt_expiry(d.with_timezone(&chrono::Utc)))
-                .unwrap_or_else(|| "-".into());
+            let token = if r.credential_status == "login_required" {
+                "login required".to_string()
+            } else {
+                r.expires_at
+                    .as_ref()
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .map(|d| fmt_expiry(d.with_timezone(&chrono::Utc)))
+                    .unwrap_or_else(|| "-".into())
+            };
 
             let (col1, col2, credits) = match (&r.usage, pool) {
                 (Some(u), PoolType::Standard) => (
@@ -158,7 +174,7 @@ fn print_rows(rows: &[Row], pool: PoolType) {
         .map(|r| r.token.len())
         .max()
         .unwrap_or(0)
-        .max("token".len());
+        .max("access token".len());
     let col1_w = rendered
         .iter()
         .map(|r| r.col1.len())
@@ -180,7 +196,7 @@ fn print_rows(rows: &[Row], pool: PoolType) {
 
     println!(
         "  {:name_w$}  {:email_w$}  {:token_w$}  {:col1_w$}  {:col2_w$}  {:credits_w$}",
-        "name", "email", "token", h_col1, h_col2, "credits"
+        "name", "email", "access token", h_col1, h_col2, "credits"
     );
     println!(
         "  {:-<name_w$}  {:-<email_w$}  {:-<token_w$}  {:-<col1_w$}  {:-<col2_w$}  {:-<credits_w$}",

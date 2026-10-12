@@ -13,30 +13,59 @@ use crate::paths::{validate_profile_name, Paths, AUTH_FILES};
 /// Snapshot the live `~/.factory/` auth files into a named profile dir.
 /// At least one auth file must exist on the live side or this errors.
 pub fn snapshot_live(paths: &Paths, name: &str) -> Result<usize> {
-    validate_profile_name(name)?;
-    let dst = paths.profile_dir(name);
-    fs::create_dir_all(&dst).with_context(|| format!("create {}", dst.display()))?;
-    set_dir_perms_700(&dst)?;
+    snapshot(paths, name, None)
+}
 
+pub fn snapshot_live_checked(
+    paths: &Paths,
+    name: &str,
+    expected: &crate::factory::Identity,
+) -> Result<usize> {
+    snapshot(paths, name, Some(expected))
+}
+
+fn snapshot(
+    paths: &Paths,
+    name: &str,
+    expected: Option<&crate::factory::Identity>,
+) -> Result<usize> {
+    validate_profile_name(name)?;
+    // Capture first, then validate before touching the destination. Droid can
+    // refresh or change accounts without taking dsw's operation lock.
+    let staged = tempfile::tempdir()?;
     let mut copied = 0usize;
     for f in AUTH_FILES {
         let src = paths.factory.join(f);
-        let to = dst.join(f);
         if src.is_file() {
-            copy_secure(&src, &to)?;
+            copy_secure(&src, &staged.path().join(f))?;
             copied += 1;
-        } else {
-            // Profile shouldn't carry stale files from a previous account.
-            let _ = fs::remove_file(&to);
         }
     }
     if copied == 0 {
-        // Roll back the empty dir to keep `list` honest.
-        let _ = fs::remove_dir_all(&dst);
         return Err(anyhow!(
             "no auth files found in {} - log in with `droid` first",
             paths.factory.display()
         ));
+    }
+    if let Some(expected) = expected {
+        let captured = crate::factory::identity_from_dir(staged.path());
+        if !crate::auth::accounts::identities_match(expected, &captured) {
+            anyhow::bail!(
+                "Droid changed accounts during capture; no profile credentials were overwritten"
+            );
+        }
+    }
+    let dst = paths.profile_dir(name);
+    fs::create_dir_all(&dst).with_context(|| format!("create {}", dst.display()))?;
+    set_dir_perms_700(&dst)?;
+    for f in AUTH_FILES {
+        let src = staged.path().join(f);
+        let to = dst.join(f);
+        if src.is_file() {
+            copy_secure(&src, &to)?;
+        } else if to.is_file() {
+            fs::remove_file(&to)?;
+        }
     }
     Ok(copied)
 }
@@ -123,7 +152,8 @@ pub fn copy_secure(from: &Path, to: &Path) -> Result<()> {
     if let Some(parent) = to.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::copy(from, to).with_context(|| format!("copy {} -> {}", from.display(), to.display()))?;
+    let contents = fs::read(from).with_context(|| format!("read {}", from.display()))?;
+    crate::auth::storage::atomic_write(to, &contents)?;
     set_file_perms_600(to)?;
     Ok(())
 }

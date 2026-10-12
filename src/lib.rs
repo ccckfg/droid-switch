@@ -1,4 +1,5 @@
 pub mod api;
+pub mod auth;
 pub mod backup;
 pub mod cli;
 pub mod commands;
@@ -7,4 +8,3 @@ pub mod keyring;
 pub mod paths;
 pub mod profile;
 pub mod state;
-

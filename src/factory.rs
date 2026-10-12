@@ -66,7 +66,6 @@ pub struct AuthTokens {
 
 pub type AuthPayload = AuthTokens;
 
-
 #[derive(Deserialize)]
 struct JwtClaims {
     email: Option<String>,
@@ -160,197 +159,16 @@ pub fn identity_from_dir(dir: &Path) -> Identity {
 
 /// Extract access and refresh tokens from a directory containing Factory auth files.
 pub fn tokens_from_dir(dir: &Path) -> Option<AuthTokens> {
-    try_tokens_v2(dir)
-        .or_else(|_| try_tokens_keyring(dir))
-        .or_else(|_| try_tokens_legacy(dir))
+    crate::auth::storage::CredentialBundle::load(dir)
         .ok()
+        .map(|b| b.tokens)
 }
-
-fn try_tokens_v2(dir: &Path) -> Result<AuthTokens> {
-    let f = dir.join("auth.v2.file");
-    let k = dir.join("auth.v2.key");
-    if !f.is_file() || !k.is_file() {
-        return Err(anyhow!("v2 files missing"));
-    }
-    let payload_json = decrypt_v2(&f, &k)?;
-    serde_json::from_str(&payload_json).context("parse auth payload")
-}
-
-fn try_tokens_keyring(dir: &Path) -> Result<AuthTokens> {
-    let keyring_file = dir.join("auth.v2.keyring");
-    let keychain_file = dir.join("auth.v2.loginkeychain");
-    let file_v2 = dir.join("auth.v2.file");
-    let target = if keyring_file.is_file() {
-        keyring_file
-    } else if keychain_file.is_file() {
-        keychain_file
-    } else if file_v2.is_file() {
-        file_v2
-    } else {
-        return Err(anyhow!("keyring file missing"));
-    };
-
-    let key_bytes = if let Ok(k_str) = fs::read_to_string(dir.join("auth.v2.key")) {
-        crate::keyring::decode_key_b64(&k_str)
-    } else {
-        crate::keyring::get_factory_encryption_key()
-    }
-    .ok_or_else(|| anyhow!("could not obtain encryption key for keyring file"))?;
-
-    let raw = fs::read_to_string(&target).with_context(|| format!("read {}", target.display()))?;
-    let payload_json = decrypt_payload(&raw, &key_bytes)?;
-    serde_json::from_str(&payload_json).context("parse auth payload")
-}
-
-fn try_tokens_legacy(dir: &Path) -> Result<AuthTokens> {
-    let p = dir.join("auth.encrypted");
-    if !p.is_file() {
-        return Err(anyhow!("legacy file missing"));
-    }
-    let raw = fs::read_to_string(&p)?;
-    serde_json::from_str(&raw).context("parse auth payload")
-}
-
 
 /// Test helpers for synthesizing valid Factory auth bundles.
 ///
 /// Public so integration tests can use it. Not part of the stable API.
 #[doc(hidden)]
-pub mod testing {
-    use super::*;
-    use aes_gcm::aead::rand_core::RngCore;
-    use aes_gcm::aead::OsRng;
-    use aes_gcm::AeadCore;
-    use aes_gcm::Aes256Gcm;
-
-    fn make_jwt(email: &str, exp: i64) -> String {
-        let h = B64URL.encode(br#"{"alg":"none","typ":"JWT"}"#);
-        let c = serde_json::json!({"email": email, "sub": "u", "exp": exp});
-        let p = B64URL.encode(serde_json::to_vec(&c).unwrap());
-        format!("{h}.{p}.{}", B64URL.encode(b"s"))
-    }
-
-    /// Write a synthetic v2 auth bundle to `dir`.
-    pub fn write_synthetic_bundle(dir: &Path, email: &str, exp: i64) {
-        let auth_json =
-            serde_json::json!({"access_token": make_jwt(email, exp), "refresh_token": "rt"})
-                .to_string();
-        let mut key = [0u8; 32];
-        OsRng.fill_bytes(&mut key);
-        let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
-        let ct_with_tag = cipher.encrypt(&nonce, auth_json.as_bytes()).unwrap();
-        let (ct, tag) = ct_with_tag.split_at(ct_with_tag.len() - 16);
-
-        let content = format!(
-            "{}:{}:{}",
-            B64.encode(nonce),
-            B64.encode(tag),
-            B64.encode(ct)
-        );
-        fs::create_dir_all(dir).unwrap();
-        fs::write(dir.join("auth.v2.file"), content).unwrap();
-        fs::write(dir.join("auth.v2.key"), B64.encode(key)).unwrap();
-    }
-
-    /// Like `write_synthetic_bundle` but uses a 16-byte IV.
-    pub fn write_synthetic_bundle_16iv(dir: &Path, email: &str, exp: i64) {
-        let auth_json =
-            serde_json::json!({"access_token": make_jwt(email, exp), "refresh_token": "r"})
-                .to_string();
-        let mut key = [0u8; 32];
-        OsRng.fill_bytes(&mut key);
-        let mut iv = [0u8; 16];
-        OsRng.fill_bytes(&mut iv);
-
-        let cipher = Aes256Gcm16::new_from_slice(&key).unwrap();
-        let nonce = GenericArray::<u8, U16>::from_slice(&iv);
-        let ct_with_tag = cipher.encrypt(nonce, auth_json.as_bytes()).unwrap();
-        let (ct, tag) = ct_with_tag.split_at(ct_with_tag.len() - 16);
-
-        let content = format!("{}:{}:{}", B64.encode(iv), B64.encode(tag), B64.encode(ct));
-        fs::create_dir_all(dir).unwrap();
-        fs::write(dir.join("auth.v2.file"), content).unwrap();
-        fs::write(dir.join("auth.v2.key"), B64.encode(key)).unwrap();
-    }
-
-    /// Write a synthetic keyring bundle to `dir` and return the base64-encoded key.
-    pub fn write_synthetic_keyring_bundle(dir: &Path, email: &str, exp: i64) -> String {
-        let auth_json =
-            serde_json::json!({"access_token": make_jwt(email, exp), "refresh_token": "r"})
-                .to_string();
-        let mut key = [0u8; 32];
-        OsRng.fill_bytes(&mut key);
-        let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
-        let ct_with_tag = cipher.encrypt(&nonce, auth_json.as_bytes()).unwrap();
-        let (ct, tag) = ct_with_tag.split_at(ct_with_tag.len() - 16);
-
-        let content = format!(
-            "{}:{}:{}",
-            B64.encode(nonce),
-            B64.encode(tag),
-            B64.encode(ct)
-        );
-        fs::create_dir_all(dir).unwrap();
-        fs::write(dir.join("auth.v2.keyring"), content).unwrap();
-        B64.encode(key)
-    }
-
-    /// Write a legacy plaintext `auth.encrypted` file (no v2 bundle).
-    pub fn write_legacy_bundle(dir: &Path, email: &str, exp: i64) {
-        let body = serde_json::json!({"access_token": make_jwt(email, exp), "refresh_token": "r"})
-            .to_string();
-        fs::create_dir_all(dir).unwrap();
-        fs::write(dir.join("auth.encrypted"), body).unwrap();
-    }
-}
+pub mod testing;
 
 #[cfg(test)]
-mod tests {
-    use super::testing::*;
-    use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn roundtrip_v2_bundle() {
-        let td = TempDir::new().unwrap();
-        write_synthetic_bundle(td.path(), "alice@example.com", 1_900_000_000);
-        let id = identity_from_dir(td.path());
-        assert_eq!(id.email.as_deref(), Some("alice@example.com"));
-        assert!(id.expires_at.is_some());
-    }
-
-    #[test]
-    fn legacy_fallback() {
-        let td = TempDir::new().unwrap();
-        write_legacy_bundle(td.path(), "bob@example.com", 1_900_000_000);
-        let id = identity_from_dir(td.path());
-        assert_eq!(id.email.as_deref(), Some("bob@example.com"));
-    }
-
-    #[test]
-    fn unknown_when_empty() {
-        let td = TempDir::new().unwrap();
-        let id = identity_from_dir(td.path());
-        assert_eq!(id, Identity::unknown());
-    }
-
-    #[test]
-    fn roundtrip_v2_bundle_with_16_byte_iv() {
-        let td = TempDir::new().unwrap();
-        write_synthetic_bundle_16iv(td.path(), "carol@example.com", 1_900_000_000);
-        let id = identity_from_dir(td.path());
-        assert_eq!(id.email.as_deref(), Some("carol@example.com"));
-    }
-
-    #[test]
-    fn roundtrip_keyring_bundle() {
-        let td = TempDir::new().unwrap();
-        let key_b64 = write_synthetic_keyring_bundle(td.path(), "dave@example.com", 1_900_000_000);
-        std::env::set_var(crate::keyring::ENV_KEY_OVERRIDE, &key_b64);
-        let id = identity_from_dir(td.path());
-        std::env::remove_var(crate::keyring::ENV_KEY_OVERRIDE);
-        assert_eq!(id.email.as_deref(), Some("dave@example.com"));
-    }
-}
+mod tests;

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.4
+
+- Persist both rotated tokens before retrying quota requests, retaining encrypted storage and other credential fields.
+- Refresh inactive target credentials before switching and preserve the previous login on failure.
+- Match the actual live identity instead of trusting a stale active-profile marker; reject cross-account sync.
+- Serialize dsw credential operations and use atomic writes; leave live token rotation to Droid.
+- Distinguish access-token expiry from confirmed reauthentication requirements.
+- Add isolated HTTP, storage, identity-mismatch, and concurrent-switch regression tests.
+- Point installers and repository links to the independently maintained ccckfg repository.
+
+
 All notable changes to this project will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),

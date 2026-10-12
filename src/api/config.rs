@@ -8,6 +8,10 @@ pub const DEFAULT_WORKOS_CLIENT_ID: &str = "client_01HNM792M5G5G1A2THWPXKFMXB";
 pub const DEFAULT_USER_AGENT: &str = "droid/0.213.0";
 pub const DEFAULT_TIMEOUT_SECS: u64 = 5;
 pub const DEFAULT_CACHE_TTL_SECS: i64 = 300; // 5 minutes
+pub const REFRESH_MARGIN_SECS: i64 = 60;
+pub const AUTH_LOCK_TIMEOUT_SECS: u64 = 10;
+pub const AUTH_LOCK_POLL_MS: u64 = 50;
+pub const AUTH_LOCK_FILE: &str = ".auth.lock";
 
 pub fn factory_limits_url() -> String {
     let base = std::env::var("FACTORY_API_BASE_URL")

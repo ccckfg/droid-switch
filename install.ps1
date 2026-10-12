@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$Repo = if ($env:DSW_REPO) { $env:DSW_REPO } else { "hqman/droid-switch" }
+$Repo = if ($env:DSW_REPO) { $env:DSW_REPO } else { "ccckfg/droid-switch" }
 $Version = if ($env:DSW_VERSION) { $env:DSW_VERSION } else { "latest" }
 $InstallDir = if ($env:DSW_INSTALL_DIR) {
     $env:DSW_INSTALL_DIR

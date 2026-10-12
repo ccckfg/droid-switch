@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-repo="${DSW_REPO:-hqman/droid-switch}"
+repo="${DSW_REPO:-ccckfg/droid-switch}"
 version="${DSW_VERSION:-latest}"
 install_dir="${DSW_INSTALL_DIR:-$HOME/.local/bin}"
 

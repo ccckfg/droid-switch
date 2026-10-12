@@ -1,8 +1,9 @@
 use anyhow::Result;
 
 use super::{ensure_home, fmt_identity};
+use crate::auth::accounts::{identities_match, sync_matching_live};
 use crate::cli::SyncArgs;
-use crate::factory::{identity_from_dir, Identity};
+use crate::factory::identity_from_dir;
 use crate::paths::{Paths, AUTH_FILES};
 use crate::profile;
 use crate::state::State;
@@ -37,7 +38,9 @@ fn sync_active(paths: &Paths) -> Result<()> {
         );
     }
 
-    profile::snapshot_live(paths, &active)?;
+    if !sync_matching_live(paths, &active)? {
+        anyhow::bail!("active profile does not match the live account; use `dsw sync --all` or explicitly import the current login");
+    }
 
     let id = identity_from_dir(&paths.profile_dir(&active));
     println!(
@@ -58,7 +61,7 @@ fn sync_all(paths: &Paths) -> Result<()> {
     for name in profile::list(paths)? {
         let saved = identity_from_dir(&paths.profile_dir(&name));
         if identities_match(&live, &saved) {
-            profile::snapshot_live(paths, &name)?;
+            sync_matching_live(paths, &name)?;
             synced.push(name);
         }
     }
@@ -77,13 +80,6 @@ fn sync_all(paths: &Paths) -> Result<()> {
         );
     }
     Ok(())
-}
-
-fn identities_match(a: &Identity, b: &Identity) -> bool {
-    if let (Some(a_email), Some(b_email)) = (&a.email, &b.email) {
-        return a_email == b_email;
-    }
-    a.subject.is_some() && a.subject == b.subject
 }
 
 fn has_live_auth(paths: &Paths) -> bool {
